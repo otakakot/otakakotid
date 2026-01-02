@@ -1,0 +1,47 @@
+openapi: 3.0.3
+info:
+  title: otakakot ID API
+  description: |-
+    otakakot ID API Documentation
+  contact:
+    email: kotaro.otaka@example.com
+  version: 0.0.1
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: Health
+    description: Health
+paths:
+  /:
+    get:
+      tags:
+        - Health
+      summary: Health Checl
+      description: Health check for the application.
+      operationId: health
+      security: []
+      responses:
+        "200":
+          description: OK
+        default:
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+  securitySchemes:
+    cookieSession:
+      type: apiKey
+      in: cookie
+      name: __session__
+security:
+  - cookieSession: []
