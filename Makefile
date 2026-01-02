@@ -20,12 +20,8 @@ gen: ## generate code.
 	@go generate ./...
 	@go mod tidy
 
-.PHONY: login
-login: ## login ko
-	@ko login --username ${DOCKERHUB_USERNAME} --password ${DOCKERHUB_TOKEN} index.docker.io
-
 .PHONY: delivery
-delivery: ## build docker image container with ko. need ko login --username ${USERNAME} --password ${PASSWORD} index.docker.io
+delivery: ## build docker image container with ko. need $docker login
 	@KO_DOCKER_REPO=index.docker.io/otakakot/otakakot \
 	 SOURCE_DATE_EPOCH=$(date +%s) \
 	 ko build --sbom=none --bare --tags=latest --platform=linux/amd64 .
