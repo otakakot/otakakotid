@@ -11,6 +11,8 @@ servers:
 tags:
   - name: Health
     description: Health
+  - name: OIDC
+    description: OpenID Connect
 paths:
   /:
     get:
@@ -29,8 +31,81 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /.well-known/openid-configuration:
+    get:
+      tags:
+        - OIDC
+      summary: OpenID Provider Configuration
+      description: OpenID Provider Configuration
+      operationId: openIDConfiguration
+      security: []      
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenIDConfiguration"
+        default:
+          description: Internal Server Error
 components:
   schemas:
+    OpenIDConfiguration:
+      type: object
+      description: https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderMetadata
+      properties:
+        issuer:
+          type: string
+          description: http://localhost:8787
+          format: uri
+          example: http://localhost:8787
+        authorization_endpoint:
+          type: string
+          description: http://localhost:8787/authorize
+          format: uri
+          example: http://localhost:8787/authorize
+        token_endpoint:
+          type: string
+          description: http://localhost:8787/token
+          format: uri
+          example: http://localhost:8787/token
+        userinfo_endpoint:
+          type: string
+          description: http://localhost:8787/userinfo
+          format: uri
+          example: http://localhost:8787/userinfo
+        jwks_uri:
+          type: string
+          description: http://localhost:8787/certs
+          format: uri
+          example: http://localhost:8787/certs
+        response_types_supported:
+          type: array
+          items:
+            type: string
+          example:
+            - code
+        subject_types_supported:
+          type: array
+          items:
+            type: string
+          example:
+            - public
+        id_token_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
+          example:
+            - RS256
+      required:
+        - issuer
+        - authorization_endpoint
+        - token_endpoint
+        - userinfo_endpoint
+        - jwks_uri
+        - response_types_supported
+        - subject_types_supported
+        - id_token_signing_alg_values_supported
     ErrorResponse:
       type: object
       properties:

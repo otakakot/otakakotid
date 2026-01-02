@@ -6,8 +6,12 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+
+	strictnethttp "github.com/oapi-codegen/runtime/strictmiddleware/nethttp"
 )
 
 // ErrorResponse defines model for ErrorResponse.
@@ -15,11 +19,35 @@ type ErrorResponse struct {
 	Message string `json:"message"`
 }
 
+// OpenIDConfiguration https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderMetadata
+type OpenIDConfiguration struct {
+	// AuthorizationEndpoint http://localhost:8787/authorize
+	AuthorizationEndpoint            string   `json:"authorization_endpoint"`
+	IdTokenSigningAlgValuesSupported []string `json:"id_token_signing_alg_values_supported"`
+
+	// Issuer http://localhost:8787
+	Issuer string `json:"issuer"`
+
+	// JwksUri http://localhost:8787/certs
+	JwksUri                string   `json:"jwks_uri"`
+	ResponseTypesSupported []string `json:"response_types_supported"`
+	SubjectTypesSupported  []string `json:"subject_types_supported"`
+
+	// TokenEndpoint http://localhost:8787/token
+	TokenEndpoint string `json:"token_endpoint"`
+
+	// UserinfoEndpoint http://localhost:8787/userinfo
+	UserinfoEndpoint string `json:"userinfo_endpoint"`
+}
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// Health Checl
 	// (GET /)
 	Health(w http.ResponseWriter, r *http.Request)
+	// OpenID Provider Configuration
+	// (GET /.well-known/openid-configuration)
+	OpenIDConfiguration(w http.ResponseWriter, r *http.Request)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -36,6 +64,20 @@ func (siw *ServerInterfaceWrapper) Health(w http.ResponseWriter, r *http.Request
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.Health(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// OpenIDConfiguration operation middleware
+func (siw *ServerInterfaceWrapper) OpenIDConfiguration(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.OpenIDConfiguration(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -166,6 +208,146 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	}
 
 	m.HandleFunc("GET "+options.BaseURL+"/{$}", wrapper.Health)
+	m.HandleFunc("GET "+options.BaseURL+"/.well-known/openid-configuration", wrapper.OpenIDConfiguration)
 
 	return m
+}
+
+type HealthRequestObject struct {
+}
+
+type HealthResponseObject interface {
+	VisitHealthResponse(w http.ResponseWriter) error
+}
+
+type Health200Response struct {
+}
+
+func (response Health200Response) VisitHealthResponse(w http.ResponseWriter) error {
+	w.WriteHeader(200)
+	return nil
+}
+
+type HealthdefaultJSONResponse struct {
+	Body       ErrorResponse
+	StatusCode int
+}
+
+func (response HealthdefaultJSONResponse) VisitHealthResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+
+	return json.NewEncoder(w).Encode(response.Body)
+}
+
+type OpenIDConfigurationRequestObject struct {
+}
+
+type OpenIDConfigurationResponseObject interface {
+	VisitOpenIDConfigurationResponse(w http.ResponseWriter) error
+}
+
+type OpenIDConfiguration200JSONResponse OpenIDConfiguration
+
+func (response OpenIDConfiguration200JSONResponse) VisitOpenIDConfigurationResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type OpenIDConfigurationdefaultResponse struct {
+	StatusCode int
+}
+
+func (response OpenIDConfigurationdefaultResponse) VisitOpenIDConfigurationResponse(w http.ResponseWriter) error {
+	w.WriteHeader(response.StatusCode)
+	return nil
+}
+
+// StrictServerInterface represents all server handlers.
+type StrictServerInterface interface {
+	// Health Checl
+	// (GET /)
+	Health(ctx context.Context, request HealthRequestObject) (HealthResponseObject, error)
+	// OpenID Provider Configuration
+	// (GET /.well-known/openid-configuration)
+	OpenIDConfiguration(ctx context.Context, request OpenIDConfigurationRequestObject) (OpenIDConfigurationResponseObject, error)
+}
+
+type StrictHandlerFunc = strictnethttp.StrictHTTPHandlerFunc
+type StrictMiddlewareFunc = strictnethttp.StrictHTTPMiddlewareFunc
+
+type StrictHTTPServerOptions struct {
+	RequestErrorHandlerFunc  func(w http.ResponseWriter, r *http.Request, err error)
+	ResponseErrorHandlerFunc func(w http.ResponseWriter, r *http.Request, err error)
+}
+
+func NewStrictHandler(ssi StrictServerInterface, middlewares []StrictMiddlewareFunc) ServerInterface {
+	return &strictHandler{ssi: ssi, middlewares: middlewares, options: StrictHTTPServerOptions{
+		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		},
+		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		},
+	}}
+}
+
+func NewStrictHandlerWithOptions(ssi StrictServerInterface, middlewares []StrictMiddlewareFunc, options StrictHTTPServerOptions) ServerInterface {
+	return &strictHandler{ssi: ssi, middlewares: middlewares, options: options}
+}
+
+type strictHandler struct {
+	ssi         StrictServerInterface
+	middlewares []StrictMiddlewareFunc
+	options     StrictHTTPServerOptions
+}
+
+// Health operation middleware
+func (sh *strictHandler) Health(w http.ResponseWriter, r *http.Request) {
+	var request HealthRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.Health(ctx, request.(HealthRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "Health")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(HealthResponseObject); ok {
+		if err := validResponse.VisitHealthResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// OpenIDConfiguration operation middleware
+func (sh *strictHandler) OpenIDConfiguration(w http.ResponseWriter, r *http.Request) {
+	var request OpenIDConfigurationRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.OpenIDConfiguration(ctx, request.(OpenIDConfigurationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "OpenIDConfiguration")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(OpenIDConfigurationResponseObject); ok {
+		if err := validResponse.VisitOpenIDConfigurationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }

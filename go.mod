@@ -2,7 +2,10 @@ module github.com/otakakot/otakakotid
 
 go 1.25.5
 
-require github.com/jackc/pgx/v5 v5.7.5
+require (
+	github.com/jackc/pgx/v5 v5.7.5
+	github.com/oapi-codegen/runtime v1.1.2
+)
 
 require (
 	cel.dev/expr v0.24.0 // indirect
